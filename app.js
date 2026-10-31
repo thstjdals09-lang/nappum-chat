@@ -51,7 +51,7 @@ function showEntry(error) {
       h(
         'section',
         { class: 'entry-card' },
-        h('p', { class: 'eyebrow' }, 'AI 납품 상담'),
+        h('p', { class: 'eyebrow' }, '납품 상담'),
         h('h1', null, info.company.name),
         h('p', { class: 'lead' }, info.company.intro),
         h(
@@ -87,7 +87,7 @@ function renderSide() {
       : [h('p', { class: 'empty' }, '품목과 수량을 말씀해 주시면 여기에 조건이 정리됩니다.')]),
     ...(latestQuote ? [quoteCard({ ...latestQuote })] : []),
   );
-  ui.modeTag.textContent = view.mode === 'human' ? '담당자 응대 중' : 'AI 상담원';
+  ui.modeTag.textContent = view.mode === 'human' ? '담당자 응대 중' : '상담 중';
   ui.modeTag.className = `tag ${view.mode === 'human' ? 'good' : ''}`;
 }
 
@@ -253,7 +253,7 @@ function showChat() {
     info.quickQuestions.map((q) => h('button', { type: 'button', onclick: () => send(q) }, q)),
   );
   ui.offers = h('div', { class: 'offers' });
-  ui.modeTag = h('span', { class: 'tag' }, 'AI 상담원');
+  ui.modeTag = h('span', { class: 'tag' }, '상담 중');
 
   const side = h(
     'aside',
@@ -314,7 +314,7 @@ function showChat() {
             ui.input,
             ui.send,
           ),
-          h('p', { class: 'fine' }, 'AI가 안내하는 내용입니다. 납품 조건은 담당자 승인 후 확정됩니다.'),
+          h('p', { class: 'fine' }, '납품 조건은 담당자 승인 후 확정됩니다.'),
         ),
         side,
       ),

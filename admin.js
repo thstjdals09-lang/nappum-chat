@@ -5,16 +5,26 @@ const POLL_MS = 8000;
 
 const app = document.getElementById('app');
 const TABS = [
-  ['today', '오늘 할 일'],
+  ['today', '대시보드'],
   ['chats', '상담'],
   ['products', '품목·가격'],
   ['company', '회사·정책'],
   ['rules', '흥정 규칙'],
 ];
 
+const STAGES = [
+  ['inquiry', '문의', ''],
+  ['haggling', '흥정 중', ''],
+  ['pending', '승인 대기', 'warn'],
+  ['approved', '승인', 'good'],
+  ['rejected', '반려', 'bad'],
+];
+
 let token = memory.get(TOKEN_KEY);
 let tab = 'today';
 let openChatId = null;
+let chatStage = 'all';
+let chatSearch = '';
 let settings = null;
 let paces = {};
 let main;
@@ -87,16 +97,18 @@ function tile(label, value, sub) {
   return h('div', { class: 'tile' }, h('span', null, label), h('b', null, value), sub && h('small', null, sub));
 }
 
+async function decideQuote(id, status, note = '') {
+  try {
+    await call(`/admin/quotes/${id}`, { method: 'POST', body: { status, note } });
+    draw();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
 function quoteRow(quote) {
   const memo = h('input', { placeholder: '구매자에게 전할 말(선택)', maxLength: 300 });
-  const decide = async (status) => {
-    try {
-      await call(`/admin/quotes/${quote.id}`, { method: 'POST', body: { status, note: memo.value } });
-      draw();
-    } catch (err) {
-      alert(err.message);
-    }
-  };
+  const decide = (status) => decideQuote(quote.id, status, memo.value);
   return h(
     'article',
     { class: 'item' },
@@ -107,6 +119,8 @@ function quoteRow(quote) {
       h('span', { class: 'sub' }, `${quote.no} · ${clock(quote.createdAt)}`),
     ),
     h('p', { class: 'sub' }, `${quote.buyer.name} · ${quote.buyer.phone}`),
+    quote.belowTarget.length > 0 &&
+      h('p', null, h('span', { class: 'tag warn' }, `적정가 미만: ${quote.belowTarget.join(', ')}`)),
     h(
       'table',
       { class: 'mini' },
@@ -179,19 +193,79 @@ function ticketRow(ticket) {
   );
 }
 
+function showChats(stage) {
+  chatStage = stage;
+  openChat(null);
+}
+
+function stageChips(chats) {
+  const chip = (id, label, count) =>
+    h(
+      'button',
+      { class: `chip ${tab === 'chats' && chatStage === id ? 'on' : ''}`, type: 'button', onclick: () => showChats(id) },
+      label,
+      h('b', null, count),
+    );
+  return h(
+    'div',
+    { class: 'chips' },
+    chip('all', '전체', chats.length),
+    STAGES.map(([id, label]) => chip(id, label, chats.filter((c) => c.stage === id).length)),
+  );
+}
+
+function chatRow(chat) {
+  const [, label, tone] = STAGES.find(([id]) => id === chat.stage);
+  const first = chat.items[0];
+  const more = chat.items.length > 1 ? ` 외 ${chat.items.length - 1}건` : '';
+  return h(
+    'button',
+    { class: 'list-row', type: 'button', onclick: () => openChat(chat.id) },
+    h(
+      'span',
+      { class: 'item-head' },
+      h('strong', { class: 'clip' }, chat.buyer.company),
+      h(
+        'span',
+        { class: 'row-tags' },
+        chat.attention && h('span', { class: 'tag bad' }, '확인 필요'),
+        chat.underTarget && h('span', { class: 'tag warn' }, '적정가 미만'),
+        h('span', { class: `tag ${tone}` }, label),
+        h('span', { class: `tag ${chat.mode === 'human' ? 'good' : ''}` }, chat.mode === 'human' ? '담당자' : 'AI'),
+      ),
+    ),
+    h('span', { class: 'sub' }, `${chat.buyer.name} · ${chat.buyer.phone} · ${clock(chat.updatedAt)}`),
+    first &&
+      h(
+        'span',
+        { class: 'deal' },
+        `${first.name} ${first.qty.toLocaleString('ko-KR')}${first.unit} · ${won(first.unitPrice)}${more}`,
+        chat.total != null && h('b', null, ` · 합계 ${won(chat.total)}`),
+      ),
+    h('span', { class: 'sub clip' }, chat.lastText || '아직 메시지가 없습니다.'),
+  );
+}
+
 async function drawToday() {
   const data = await call('/admin/overview');
   const limit = settings?.limits?.dailyMessages;
+  const { stats } = data;
   main.replaceChildren(
-    h('h1', null, '오늘 할 일'),
+    h('h1', null, '대시보드'),
     h(
       'div',
       { class: 'tiles' },
-      tile('승인 대기 견적', data.quotes.length),
+      tile('오늘 새 상담', stats.newToday, `전체 ${data.chats.length}건`),
+      tile('승인 대기 견적', data.quotes.length, data.quotes.length ? `합계 ${won(stats.pendingTotal)}` : null),
       tile('처리할 요청', data.tickets.length),
-      tile('오늘 AI 응답', data.usage.messages, limit ? `하루 한도 ${limit}회` : null),
-      tile('오늘 AI 비용', `약 $${data.usage.costUsd.toFixed(2)}`, '토큰 사용량 기준 추정'),
+      tile('이번 달 승인', won(stats.approvedTotal), `${stats.approvedCount}건 · 부가세 포함`),
     ),
+    h(
+      'p',
+      { class: 'sub' },
+      `오늘 AI 응답 ${data.usage.messages}회${limit ? ` / 하루 한도 ${limit}회` : ''} · 비용 약 $${data.usage.costUsd.toFixed(2)}`,
+    ),
+    stageChips(data.chats),
     h(
       'div',
       { class: 'columns' },
@@ -210,6 +284,15 @@ async function drawToday() {
           : h('p', { class: 'empty' }, '담당자 연결 요청이나 AI가 답하지 못한 질문이 없습니다.'),
       ),
     ),
+    h(
+      'div',
+      { class: 'item-head' },
+      h('h2', null, '최근 상담'),
+      h('button', { class: 'link', type: 'button', onclick: () => showChats('all') }, '전체 보기'),
+    ),
+    data.chats.length
+      ? h('div', { class: 'list' }, data.chats.slice(0, 5).map(chatRow))
+      : h('p', { class: 'empty' }, '아직 들어온 상담이 없습니다.'),
   );
 }
 
@@ -222,36 +305,37 @@ function openChat(id) {
 
 async function drawChatList() {
   const { chats } = await call('/admin/overview');
-  main.replaceChildren(
-    h('h1', null, '상담'),
-    chats.length
-      ? h(
-          'div',
-          { class: 'list' },
-          chats.map((chat) =>
-            h(
-              'button',
-              { class: 'list-row', type: 'button', onclick: () => openChat(chat.id) },
-              h(
-                'span',
-                { class: 'item-head' },
-                h('strong', null, chat.buyer.company),
-                h('span', { class: `tag ${chat.mode === 'human' ? 'good' : ''}` }, chat.mode === 'human' ? '담당자' : 'AI'),
-              ),
-              h('span', { class: 'sub' }, `${chat.buyer.name} · ${chat.messages}개 메시지 · ${clock(chat.updatedAt)}`),
-              h('span', { class: 'sub clip' }, chat.lastText || '아직 메시지가 없습니다.'),
-            ),
-          ),
-        )
-      : h('p', { class: 'empty' }, '아직 들어온 상담이 없습니다.'),
-  );
+  const list = h('div', { class: 'list' });
+  const paint = () => {
+    const word = chatSearch.trim().toLowerCase();
+    const shown = chats.filter(
+      (chat) =>
+        (chatStage === 'all' || chat.stage === chatStage) &&
+        `${chat.buyer.company} ${chat.buyer.name} ${chat.buyer.phone}`.toLowerCase().includes(word),
+    );
+    const empty = chats.length ? '조건에 맞는 상담이 없습니다.' : '아직 들어온 상담이 없습니다.';
+    list.replaceChildren(...(shown.length ? shown.map(chatRow) : [h('p', { class: 'empty' }, empty)]));
+  };
+  const search = h('input', {
+    class: 'search',
+    type: 'search',
+    value: chatSearch,
+    placeholder: '회사, 담당자, 연락처 검색',
+    'aria-label': '상담 검색',
+    oninput(event) {
+      chatSearch = event.target.value;
+      paint();
+    },
+  });
+  paint();
+  main.replaceChildren(h('h1', null, '상담'), stageChips(chats), search, list);
 }
 
 async function drawChat(id) {
   const chat = await call(`/admin/chats/${id}`);
   const log = h('div', { class: 'log static' });
   for (const message of chat.messages) {
-    log.append(bubble(message));
+    log.append(bubble(message, { agent: 'AI' }));
     for (const card of message.cards || []) {
       if (card.kind === 'offer') log.append(offerCard(card));
     }
@@ -316,14 +400,28 @@ async function drawChat(id) {
                 h('strong', null, neg.name),
                 h('p', { class: 'sub' }, `흥정 ${neg.rounds}회`),
                 neg.offer && h('p', null, `현재 제시 ${won(neg.offer.unitPrice)}`),
-                neg.floor != null && h('p', { class: 'sub' }, `최저 허용가 ${won(neg.floor)}`),
+                neg.target != null && h('p', { class: 'sub' }, `적정가 ${won(neg.target)}`),
+                neg.floor != null && h('p', { class: 'sub' }, `절대 하한가 ${won(neg.floor)}`),
               ),
             )
           : h('p', { class: 'empty' }, '아직 흥정이 없습니다.'),
         h('h2', null, '견적'),
         chat.quotes.length
           ? chat.quotes.map((q) =>
-              h('div', { class: 'item' }, h('div', { class: 'item-head' }, h('strong', null, q.no), quoteTag(q.status)), h('p', null, won(q.total))),
+              h(
+                'div',
+                { class: 'item' },
+                h('div', { class: 'item-head' }, h('strong', null, q.no), quoteTag(q.status)),
+                h('p', null, won(q.total)),
+                q.belowTarget.length > 0 && h('p', null, h('span', { class: 'tag warn' }, '적정가 미만')),
+                q.status === 'pending' &&
+                  h(
+                    'div',
+                    { class: 'row' },
+                    h('button', { class: 'primary', type: 'button', onclick: () => decideQuote(q.id, 'approved') }, '승인'),
+                    h('button', { class: 'ghost', type: 'button', onclick: () => decideQuote(q.id, 'rejected') }, '반려'),
+                  ),
+              ),
             )
           : h('p', { class: 'empty' }, '아직 견적이 없습니다.'),
       ),
@@ -341,6 +439,22 @@ function field(label, object, key, { type = 'text', hint, cls, rows } = {}) {
   };
   const control = rows ? h('textarea', { ...props, rows }) : h('input', { ...props, type, step: 'any' });
   return h('label', { class: cls || '' }, label, control, hint && h('small', null, hint));
+}
+
+// 값이 없으면 항목을 지워서 흥정 규칙 탭의 기본값을 따르게 한다.
+function choice(label, object, key, options, hint) {
+  const control = h(
+    'select',
+    {
+      onchange(event) {
+        const [value] = options.find(([id]) => String(id) === event.target.value);
+        if (value === '') delete object[key];
+        else object[key] = value;
+      },
+    },
+    options.map(([id, text]) => h('option', { value: id, selected: id === (object[key] ?? '') }, text)),
+  );
+  return h('label', null, label, control, hint && h('small', null, hint));
 }
 
 function saveBar() {
@@ -371,13 +485,23 @@ function saveBar() {
 
 function productForm(product) {
   const preview = h('p', { class: 'path' });
+  const range = h('p', { class: 'range' });
+  const paintRange = () => {
+    if (!(product.list > 0 && product.floor > 0)) {
+      range.textContent = '정가와 절대 하한가를 넣어 주세요.';
+      return;
+    }
+    const aim = product.target > 0 ? `${won(product.target)} 근처에서 합의를 노리고, ` : '';
+    range.textContent = `${won(product.list)}에서 시작해 ${aim}${won(product.floor)} 밑으로는 절대 합의하지 않습니다.`;
+  };
+  paintRange();
   const showPreview = async () => {
     try {
       const data = await call('/admin/preview', {
         method: 'POST',
         body: { productId: product.id, qty: product.moq },
       });
-      preview.textContent = `최소 수량 기준, 낮게 계속 부를 때: ${data.path.map((p) => won(p.price)).join(' → ')}`;
+      preview.textContent = `최소 수량 기준, 낮게 계속 부를 때: ${data.path.map((p) => won(p.price)).join(' → ')} (적정가 ${won(data.target)})`;
     } catch (err) {
       preview.textContent = `${err.message} 새 품목은 저장한 뒤에 볼 수 있습니다.`;
     }
@@ -412,7 +536,36 @@ function productForm(product) {
 
   return h(
     'article',
-    { class: 'item product' },
+    { class: 'item product', oninput: paintRange },
+    h(
+      'div',
+      { class: 'item-head' },
+      h('strong', null, product.name || '새 품목'),
+      h(
+        'label',
+        { class: 'check' },
+        h('input', {
+          type: 'checkbox',
+          checked: product.active !== false,
+          onchange(event) {
+            product.active = event.target.checked;
+          },
+        }),
+        h('span', null, '판매 중'),
+      ),
+    ),
+    h('h3', null, '흥정 기준'),
+    h(
+      'div',
+      { class: 'grid' },
+      field('정가(원)', product, 'list', { type: 'number', hint: '처음 보여 주는 단가' }),
+      field('적정가(원)', product, 'target', { type: 'number', cls: 'secret', hint: '이 가격 근처 합의가 목표. 밑으로 합의되면 표시됩니다' }),
+      field('절대 하한가(원)', product, 'floor', { type: 'number', cls: 'secret', hint: '이 밑으로는 어떤 조건에도 합의하지 않습니다' }),
+      choice('양보 속도', product, 'pace', [['', '기본 규칙 따름'], ...Object.entries(paces).map(([id, p]) => [id, p.label])]),
+      choice('합의 전 되받기', product, 'minRounds', [['', '기본 규칙 따름'], [0, '바로 합의'], [1, '1번'], [2, '2번'], [3, '3번'], [4, '4번'], [5, '5번']]),
+    ),
+    range,
+    h('h3', null, '품목 정보'),
     h(
       'div',
       { class: 'grid' },
@@ -420,8 +573,6 @@ function productForm(product) {
       field('품목명', product, 'name', { cls: 'span2' }),
       field('규격', product, 'spec', { cls: 'span2' }),
       field('단위', product, 'unit'),
-      field('정가(원)', product, 'list', { type: 'number' }),
-      field('최저 허용가(원)', product, 'floor', { type: 'number', cls: 'secret', hint: 'AI도 구매자도 볼 수 없습니다' }),
       field('최소 주문', product, 'moq', { type: 'number' }),
       field('재고', product, 'stock', { type: 'number' }),
       field('재고 납기(일)', product, 'leadDays', { type: 'number' }),
@@ -467,7 +618,7 @@ function productForm(product) {
 function drawProducts() {
   main.replaceChildren(
     h('h1', null, '품목·가격'),
-    h('p', { class: 'sub' }, '최저 허용가는 서버의 가격 계산에만 쓰입니다. AI가 받는 자료에는 들어가지 않습니다.'),
+    h('p', { class: 'sub' }, '적정가와 절대 하한가는 서버의 가격 계산에만 쓰입니다. AI도 구매자도 볼 수 없습니다. 수량 할인이나 조건을 붙여도 절대 하한가 밑으로는 내려가지 않습니다.'),
     ...settings.products.map(productForm),
     h(
       'button',
@@ -476,7 +627,7 @@ function drawProducts() {
         type: 'button',
         onclick() {
           settings.products.push({
-            id: '', name: '', spec: '', unit: '개', list: 0, floor: 0, moq: 1,
+            id: '', name: '', spec: '', unit: '개', list: 0, target: 0, floor: 0, moq: 1,
             stock: 0, leadDays: 3, makeDays: 14, tiers: [], note: '', active: true,
           });
           draw();
@@ -600,20 +751,21 @@ function drawRules() {
       },
     },
     Object.entries(paces).map(([id, p]) =>
-      h('option', { value: id, selected: id === settings.negotiation.pace }, `${p.label} (${p.steps.length}번에 최저가 도달)`),
+      h('option', { value: id, selected: id === settings.negotiation.pace }, `${p.label} (${p.steps.length}번에 절대 하한가 도달)`),
     ),
   );
   main.replaceChildren(
     h('h1', null, '흥정 규칙'),
+    h('p', { class: 'sub' }, '모든 품목의 기본값입니다. 품목마다 다르게 하려면 품목·가격 탭에서 바꿉니다.'),
     h(
       'div',
       { class: 'form-card' },
-      h('label', null, '양보 속도', pace, h('small', null, '구매자가 희망가를 부를 때마다 최저 허용가 쪽으로 다가가는 속도입니다.')),
+      h('label', null, '양보 속도', pace, h('small', null, '구매자가 희망가를 부를 때마다 적정가를 거쳐 절대 하한가 쪽으로 다가가는 속도입니다.')),
       field('단가 단위(원)', settings.negotiation, 'roundUnit', { type: 'number', hint: '제시 단가를 이 단위로 올림합니다.' }),
       field('합의 전 되받기 횟수', settings.negotiation, 'minRounds', { type: 'number', hint: '희망가가 받아 줄 만해도 이 횟수만큼은 사이값으로 되받은 뒤에 합의합니다. 0이면 바로 합의합니다.' }),
     ),
     h('h2', null, '가격을 낮춰 주는 조건'),
-    h('p', { class: 'sub' }, '구매자가 받아들이면 제시가와 최저 허용가가 함께 내려갑니다. 단순히 깎아 주는 대신 무언가를 받고 내려 주는 장치입니다.'),
+    h('p', { class: 'sub' }, '구매자가 받아들이면 시작가와 적정가가 함께 내려갑니다. 절대 하한가는 내려가지 않습니다. 단순히 깎아 주는 대신 무언가를 받고 내려 주는 장치입니다.'),
     h(
       'div',
       { class: 'form-card' },
@@ -662,7 +814,9 @@ async function draw() {
 
 function editing() {
   const el = document.activeElement;
-  return el && ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName);
+  if (el && ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return true;
+  // 쓰다 만 답변이 있으면 화면을 다시 그려 지우지 않는다.
+  return [...main.querySelectorAll('.item input:not([type=checkbox]), .item textarea, .staff-reply textarea')].some((box) => box.value);
 }
 
 async function start() {

@@ -124,8 +124,8 @@ export function quoteCard(card) {
   );
 }
 
-export function bubble(message) {
-  const labels = { agent: 'AI 상담원', staff: '담당자' };
+export function bubble(message, names) {
+  const labels = { agent: '상담원', staff: '담당자', ...names };
   if (message.role === 'system') return h('p', { class: 'note' }, message.text);
   return h(
     'div',
