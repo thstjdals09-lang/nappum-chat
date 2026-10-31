@@ -591,6 +591,7 @@ function conditionForm(condition, i) {
 }
 
 function drawRules() {
+  settings.negotiation.minRounds ??= 2;
   const pace = h(
     'select',
     {
@@ -609,6 +610,7 @@ function drawRules() {
       { class: 'form-card' },
       h('label', null, '양보 속도', pace, h('small', null, '구매자가 희망가를 부를 때마다 최저 허용가 쪽으로 다가가는 속도입니다.')),
       field('단가 단위(원)', settings.negotiation, 'roundUnit', { type: 'number', hint: '제시 단가를 이 단위로 올림합니다.' }),
+      field('합의 전 되받기 횟수', settings.negotiation, 'minRounds', { type: 'number', hint: '희망가가 받아 줄 만해도 이 횟수만큼은 사이값으로 되받은 뒤에 합의합니다. 0이면 바로 합의합니다.' }),
     ),
     h('h2', null, '가격을 낮춰 주는 조건'),
     h('p', { class: 'sub' }, '구매자가 받아들이면 제시가와 최저 허용가가 함께 내려갑니다. 단순히 깎아 주는 대신 무언가를 받고 내려 주는 장치입니다.'),
