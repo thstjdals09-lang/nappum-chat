@@ -67,7 +67,8 @@ function showEntry(error) {
             h(
               'span',
               null,
-              'AI 상담원이 응대하는 데 동의합니다. 상담 내용은 응대 기록으로 저장되고 답변을 만들기 위해 AI 서비스(Anthropic)로 전달됩니다. 이름과 연락처는 납품 상담에만 씁니다.',
+              'AI 상담원이 응대하는 데 동의합니다. 회사명, 이름, 연락처, 상담 내용은 납품 상담에만 쓰고 1년 뒤 지웁니다. 응대를 위해 해외 서비스(미국 Anthropic, 일본 서버의 Fly.io)로 전달됩니다. ',
+              h('a', { href: 'privacy.html', target: '_blank', rel: 'noopener' }, '개인정보 처리방침'),
             ),
           ),
           alert,

@@ -10,7 +10,11 @@ const TABS = [
   ['products', '품목·가격'],
   ['company', '회사·정책'],
   ['rules', '흥정 규칙'],
+  ['alerts', '알림'],
 ];
+
+const QR_SCRIPT = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js';
+const SAMPLE_PRICES = { 'GLV-NBR': 12000, 'MSK-P2': 28000, 'FLM-500': 9500, 'TIE-300': 3200 };
 
 const STAGES = [
   ['inquiry', '문의', ''],
@@ -246,12 +250,51 @@ function chatRow(chat) {
   );
 }
 
-async function drawToday() {
+const isSample = (product) => SAMPLE_PRICES[product.id] === product.list;
+
+function goTo(target) {
+  tab = target;
+  openChatId = null;
+  drawNav();
+  draw();
+}
+
+// 공장에 링크를 보내기 전에 끝낼 일. 다 끝나면 대시보드에서 사라진다.
+function setupNotice(pushDevices) {
+  const { company } = settings;
+  const todo = [
+    settings.products.some(isSample) && ['products', '예시 품목을 실제 품목과 가격으로 바꾸기'],
+    /^[0-]+$/.test(company.phone) && ['company', '회사 전화번호 넣기'],
+    company.email.endsWith('@example.com') && ['company', '회사 이메일 넣기'],
+    company.address.startsWith('예시') && ['company', '회사 주소 넣기'],
+    !company.privacyOfficer && ['company', '개인정보 담당자 넣기'],
+    pushDevices === 0 && ['alerts', '알림 켜기'],
+  ].filter(Boolean);
+  if (todo.length === 0) return [];
+  return [
+    h(
+      'section',
+      { class: 'setup' },
+      h('h2', null, '공장에 보내기 전에 할 일'),
+      todo.map(([target, label]) => h('button', { class: 'link', type: 'button', onclick: () => goTo(target) }, label)),
+    ),
+  ];
+}
+
+async function loadOverview() {
   const data = await call('/admin/overview');
+  const waiting = data.quotes.length + data.tickets.length;
+  document.title = waiting ? `(${waiting}) 납품 상담 관리` : '납품 상담 관리';
+  return data;
+}
+
+async function drawToday() {
+  const data = await loadOverview();
   const limit = settings?.limits?.dailyMessages;
   const { stats } = data;
   main.replaceChildren(
     h('h1', null, '대시보드'),
+    ...setupNotice(data.pushDevices),
     h(
       'div',
       { class: 'tiles' },
@@ -304,7 +347,7 @@ function openChat(id) {
 }
 
 async function drawChatList() {
-  const { chats } = await call('/admin/overview');
+  const { chats } = await loadOverview();
   const list = h('div', { class: 'list' });
   const paint = () => {
     const word = chatSearch.trim().toLowerCase();
@@ -331,6 +374,20 @@ async function drawChatList() {
   main.replaceChildren(h('h1', null, '상담'), stageChips(chats), search, list);
 }
 
+// 사장님 휴대폰의 전화·문자 앱을 바로 연다.
+function contactLinks(chat) {
+  const phone = chat.buyer.phone.replace(/\D/g, '');
+  const quote = chat.quotes.at(-1);
+  const decided = quote && quote.status !== 'pending' ? ` 견적 ${quote.no}이(가) ${quote.status === 'approved' ? '승인' : '반려'}되었습니다.` : '';
+  const text = `안녕하세요, ${settings.company.name}입니다.${decided}`;
+  return h(
+    'div',
+    { class: 'row' },
+    h('a', { class: 'ghost-link', href: `tel:${phone}` }, '전화 걸기'),
+    h('a', { class: 'ghost-link', href: `sms:${phone}?&body=${encodeURIComponent(text)}` }, '문자 보내기'),
+  );
+}
+
 async function drawChat(id) {
   const chat = await call(`/admin/chats/${id}`);
   const log = h('div', { class: 'log static' });
@@ -355,6 +412,7 @@ async function drawChat(id) {
     h('button', { class: 'link', type: 'button', onclick: () => openChat(null) }, '← 상담 목록'),
     h('h1', null, chat.buyer.company),
     h('p', { class: 'sub' }, `${chat.buyer.name} · ${chat.buyer.phone}`),
+    contactLinks(chat),
     h(
       'div',
       { class: 'split' },
@@ -424,6 +482,23 @@ async function drawChat(id) {
               ),
             )
           : h('p', { class: 'empty' }, '아직 견적이 없습니다.'),
+        h(
+          'button',
+          {
+            class: 'link danger',
+            type: 'button',
+            async onclick() {
+              if (!confirm(`${chat.buyer.company} 상담 기록을 모두 지울까요? 대화와 견적이 함께 지워지고 되돌릴 수 없습니다.`)) return;
+              try {
+                await call(`/admin/chats/${id}/delete`, { method: 'POST', body: {} });
+                openChat(null);
+              } catch (err) {
+                alert(err.message);
+              }
+            },
+          },
+          '상담 기록 삭제',
+        ),
       ),
     ),
   );
@@ -565,7 +640,10 @@ function productForm(product) {
       choice('합의 전 되받기', product, 'minRounds', [['', '기본 규칙 따름'], [0, '바로 합의'], [1, '1번'], [2, '2번'], [3, '3번'], [4, '4번'], [5, '5번']]),
     ),
     range,
-    h('h3', null, '품목 정보'),
+    h(
+      'details',
+      { open: !product.id },
+      h('summary', null, '품목 정보·수량 할인'),
     h(
       'div',
       { class: 'grid' },
@@ -582,20 +660,21 @@ function productForm(product) {
     h('h3', null, '수량 할인'),
     tierRows,
     h(
+      'button',
+      {
+        class: 'link',
+        type: 'button',
+        onclick() {
+          (product.tiers ||= []).push({ minQty: 0, pct: 0 });
+          drawTiers();
+        },
+      },
+      '+ 구간 추가',
+    ),
+    ),
+    h(
       'div',
       { class: 'row' },
-      h(
-        'button',
-        {
-          class: 'link',
-          type: 'button',
-          onclick() {
-            (product.tiers ||= []).push({ minQty: 0, pct: 0 });
-            drawTiers();
-          },
-        },
-        '+ 구간 추가',
-      ),
       h('button', { class: 'link', type: 'button', onclick: showPreview }, '저장된 값으로 흥정 미리보기'),
       h(
         'button',
@@ -615,10 +694,74 @@ function productForm(product) {
   );
 }
 
-function drawProducts() {
+const IMPORT_COLUMNS = '품목명, 규격, 단위, 정가, 적정가, 절대 하한가, 최소 주문, 재고';
+const toNumber = (text) => Number(String(text ?? '').replace(/[^\d.]/g, ''));
+
+function productFromRow([name, spec, unit, list, target, floor, moq, stock], id) {
+  return {
+    id, name, spec: spec || '', unit: unit || '개',
+    list: toNumber(list), target: toNumber(target), floor: toNumber(floor),
+    moq: toNumber(moq) || 1, stock: toNumber(stock),
+    leadDays: 3, makeDays: 14, tiers: [], note: '', active: true,
+  };
+}
+
+function nextProductId(taken) {
+  let n = taken.size + 1;
+  while (taken.has(`P${String(n).padStart(3, '0')}`)) n += 1;
+  const id = `P${String(n).padStart(3, '0')}`;
+  taken.add(id);
+  return id;
+}
+
+// 엑셀에서 복사한 칸은 탭으로 나뉘어 들어온다. 제목 줄처럼 정가가 숫자가 아닌 줄은 건너뛴다.
+function importBox(status) {
+  const box = h('textarea', { rows: 4, placeholder: IMPORT_COLUMNS, 'aria-label': '엑셀 붙여넣기' });
+  const add = () => {
+    const rows = box.value.split('\n').map((line) => line.split('\t').map((cell) => cell.trim())).filter((cells) => toNumber(cells[3]) > 0);
+    if (rows.length === 0) {
+      status.textContent = '읽을 수 있는 줄이 없습니다. 칸 순서를 확인해 주세요.';
+      return;
+    }
+    const taken = new Set(settings.products.map((p) => p.id));
+    for (const cells of rows) settings.products.push(productFromRow(cells, nextProductId(taken)));
+    drawProducts(`${rows.length}개 품목을 아래에 넣었습니다. 맨 아래 저장을 눌러야 반영됩니다.`);
+  };
+  return h(
+    'details',
+    { class: 'form-card' },
+    h('summary', null, '엑셀에서 한 번에 넣기'),
+    h('p', { class: 'sub' }, `엑셀에서 아래 순서의 칸을 복사해 붙여 넣으세요. ${IMPORT_COLUMNS}`),
+    box,
+    h('button', { class: 'ghost', type: 'button', onclick: add }, '품목 추가'),
+  );
+}
+
+function drawProducts(note = '') {
+  const status = h('p', { class: 'path', role: 'status' }, note);
+  const hasSample = settings.products.some(isSample);
   main.replaceChildren(
     h('h1', null, '품목·가격'),
     h('p', { class: 'sub' }, '적정가와 절대 하한가는 서버의 가격 계산에만 쓰입니다. AI도 구매자도 볼 수 없습니다. 수량 할인이나 조건을 붙여도 절대 하한가 밑으로는 내려가지 않습니다.'),
+    importBox(status),
+    ...(hasSample
+      ? [
+          h(
+            'button',
+            {
+              class: 'link danger',
+              type: 'button',
+              onclick() {
+                if (!confirm('예시 품목을 모두 지울까요? 저장을 눌러야 반영됩니다.')) return;
+                settings.products = settings.products.filter((p) => !isSample(p));
+                drawProducts('예시 품목을 지웠습니다. 맨 아래 저장을 눌러야 반영됩니다.');
+              },
+            },
+            '예시 품목 모두 지우기',
+          ),
+        ]
+      : []),
+    status,
     ...settings.products.map(productForm),
     h(
       'button',
@@ -688,6 +831,7 @@ function drawCompany() {
         field('이메일', company, 'email'),
         field('운영 시간', company, 'hours'),
         field('주소', company, 'address', { cls: 'span3' }),
+        field('개인정보 담당자', company, 'privacyOfficer', { cls: 'span3', hint: '개인정보 처리방침에 표시됩니다. 예: 대표 홍길동' }),
       ),
       field('첫인사', settings, 'greeting', { rows: 2 }),
       lines(settings, 'quickQuestions', '바로 누를 수 있는 질문', '한 줄에 하나씩'),
@@ -794,6 +938,108 @@ function drawRules() {
   );
 }
 
+const pushKeyBytes = (key) =>
+  Uint8Array.from(atob(key.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(key.length / 4) * 4, '=')), (c) => c.charCodeAt(0));
+
+function phoneGuide() {
+  const qr = h('div', { class: 'qr' });
+  const showQr = async () => {
+    try {
+      await new Promise((resolve, reject) => {
+        if (window.qrcode) resolve();
+        else document.head.append(h('script', { src: QR_SCRIPT, onload: resolve, onerror: reject }));
+      });
+      const code = window.qrcode(0, 'M');
+      code.addData(`${location.origin}${location.pathname}#t=${token}`);
+      code.make();
+      qr.replaceChildren(
+        h('img', { src: code.createDataURL(5, 10), alt: '관리 화면 QR 코드' }),
+        h('p', { class: 'sub' }, '이 QR에는 관리 비밀번호가 들어 있습니다. 다른 사람에게 보이지 마세요.'),
+      );
+    } catch {
+      qr.replaceChildren(h('p', { class: 'note error' }, 'QR을 불러오지 못했습니다.'));
+    }
+  };
+  return h(
+    'div',
+    { class: 'form-card' },
+    h('button', { class: 'ghost', type: 'button', onclick: showQr }, 'QR 코드 보기'),
+    qr,
+    h('p', { class: 'sub' }, '안드로이드: QR을 찍어 관리 화면을 열고, 알림 탭에서 알림 켜기를 누릅니다.'),
+    h('p', { class: 'sub' }, '아이폰: QR을 찍어 사파리로 열고, 공유 버튼에서 홈 화면에 추가를 누릅니다. 홈 화면 아이콘으로 다시 열어 관리 비밀번호를 넣은 뒤 알림 켜기를 누릅니다.'),
+    h(
+      'button',
+      {
+        class: 'link',
+        type: 'button',
+        async onclick(event) {
+          await navigator.clipboard.writeText(token);
+          event.target.textContent = '복사했습니다';
+        },
+      },
+      '관리 비밀번호 복사',
+    ),
+  );
+}
+
+async function drawAlerts() {
+  const { publicKey, devices } = await call('/admin/push');
+  const supported = 'serviceWorker' in navigator && 'PushManager' in window;
+  const registration = supported ? await navigator.serviceWorker.getRegistration() : null;
+  const subscription = (await registration?.pushManager.getSubscription()) ?? null;
+  const status = h('p', { class: 'sub', role: 'status' });
+  const guarded = (run) => async () => {
+    try {
+      await run();
+    } catch (err) {
+      status.textContent = err.message;
+    }
+  };
+
+  const enable = guarded(async () => {
+    if ((await Notification.requestPermission()) !== 'granted') {
+      status.textContent = '브라우저에서 알림이 차단되어 있습니다. 주소창의 사이트 설정에서 알림을 허용해 주세요.';
+      return;
+    }
+    const worker = await navigator.serviceWorker.register('sw.js');
+    await navigator.serviceWorker.ready;
+    const created = await worker.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: pushKeyBytes(publicKey) });
+    await call('/admin/push', { method: 'POST', body: { subscription: created.toJSON() } });
+    draw();
+  });
+  const disable = guarded(async () => {
+    await subscription.unsubscribe();
+    await call('/admin/push/remove', { method: 'POST', body: { endpoint: subscription.endpoint } });
+    draw();
+  });
+  const test = guarded(async () => {
+    const { sent } = await call('/admin/push/test', { method: 'POST', body: {} });
+    status.textContent = `${sent}대의 기기로 시험 알림을 보냈습니다.`;
+  });
+
+  const controls = subscription
+    ? [
+        h('button', { class: 'primary', type: 'button', onclick: test }, '시험 알림 보내기'),
+        h('button', { class: 'ghost', type: 'button', onclick: disable }, '이 기기 알림 끄기'),
+      ]
+    : [h('button', { class: 'primary', type: 'button', disabled: !supported, onclick: enable }, '이 기기에서 알림 켜기')];
+
+  main.replaceChildren(
+    h('h1', null, '알림'),
+    h('p', { class: 'sub' }, '견적 요청, 담당자 연결 요청, AI가 답하지 못한 질문이 들어오면 켜 둔 기기로 바로 알립니다.'),
+    h(
+      'div',
+      { class: 'form-card' },
+      h('p', null, `이 기기: ${subscription ? '알림 켜짐' : '알림 꺼짐'} · 알림 받는 기기 ${devices}대`),
+      !supported && h('p', { class: 'sub' }, '이 브라우저에서는 알림을 쓸 수 없습니다. 아이폰은 아래 안내대로 홈 화면에 추가해 주세요.'),
+      h('div', { class: 'row' }, controls),
+      status,
+    ),
+    h('h2', null, '휴대폰에서 받기'),
+    phoneGuide(),
+  );
+}
+
 async function draw() {
   try {
     if (tab === 'today') await drawToday();
@@ -801,6 +1047,7 @@ async function draw() {
     else if (tab === 'chats') await drawChatList();
     else if (tab === 'products') drawProducts();
     else if (tab === 'company') drawCompany();
+    else if (tab === 'alerts') await drawAlerts();
     else drawRules();
   } catch (err) {
     if (err.status === 401) {

@@ -1,0 +1,9 @@
+{
+  "name": "납품 상담 관리",
+  "short_name": "납품 관리",
+  "start_url": "admin.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f3ee",
+  "theme_color": "#14523f"
+}
