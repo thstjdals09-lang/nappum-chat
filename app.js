@@ -11,6 +11,7 @@ let sending = false;
 let view = { mode: 'ai', offers: [], quotes: [] };
 const ui = {};
 const actions = new Map();
+const quoteCards = new Map();
 
 const auth = () => ({ 'x-chat-token': session.token });
 
@@ -102,7 +103,10 @@ function appendMessage(message) {
   for (const card of message.cards || []) {
     if (card.kind === 'quote') {
       card.items.forEach((item) => retireAction(item.productId));
-      ui.log.append(quoteCard(card));
+      quoteCards.get(card.id)?.remove();
+      const shown = quoteCard(card);
+      quoteCards.set(card.id, shown);
+      ui.log.append(shown);
       continue;
     }
     retireAction(card.productId);
@@ -121,6 +125,17 @@ function appendMessage(message) {
   }
 }
 
+// 메시지에 담긴 견적은 그때의 사본이라 승인·반려가 나면 대화 속 카드도 바꿔 준다.
+function syncQuoteCards() {
+  for (const quote of view.quotes) {
+    const shown = quoteCards.get(quote.id);
+    const fresh = quoteCard(quote);
+    if (!shown || shown.textContent === fresh.textContent) continue;
+    shown.replaceWith(fresh);
+    quoteCards.set(quote.id, fresh);
+  }
+}
+
 function absorb(data) {
   view = { mode: data.mode, offers: data.offers, quotes: data.quotes };
   for (const message of data.messages) {
@@ -129,6 +144,7 @@ function absorb(data) {
       lastSeq = message.seq;
     }
   }
+  syncQuoteCards();
   renderSide();
 }
 
@@ -216,7 +232,8 @@ function productList() {
 
 function showChat() {
   actions.clear();
-  ui.log = h('div', { class: 'log', 'aria-live': 'polite' });
+  quoteCards.clear();
+  ui.log =h('div', { class: 'log', 'aria-live': 'polite' });
   ui.input = h('textarea', {
     rows: 1,
     maxLength: 1500,
