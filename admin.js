@@ -1,4 +1,4 @@
-import { bubble, clock, h, memory, offerCard, quoteTag, request, won } from './common.js';
+import { LOAD_TIMEOUT_MS, bubble, clock, h, loadingView, memory, offerCard, quoteTag, request, retryView, won } from './common.js';
 
 const TOKEN_KEY = 'nappum.admin';
 const POLL_MS = 8000;
@@ -294,7 +294,6 @@ async function drawToday() {
   const { stats } = data;
   main.replaceChildren(
     h('h1', null, '대시보드'),
-    ...setupNotice(data.pushDevices),
     h(
       'div',
       { class: 'tiles' },
@@ -308,6 +307,8 @@ async function drawToday() {
       { class: 'sub' },
       `오늘 AI 응답 ${data.usage.messages}회${limit ? ` / 하루 한도 ${limit}회` : ''} · 비용 약 $${data.usage.costUsd.toFixed(2)}`,
     ),
+    // 할 일 안내가 길어도 핵심 숫자가 밀려나지 않게 숫자 아래에 둔다.
+    ...setupNotice(data.pushDevices),
     stageChips(data.chats),
     h(
       'div',
@@ -1071,12 +1072,18 @@ async function start() {
     showLogin();
     return;
   }
+  app.replaceChildren(loadingView('관리 화면을 불러오는 중입니다…'));
   try {
-    ({ settings, paces } = await call('/admin/settings'));
+    ({ settings, paces } = await call('/admin/settings', { timeoutMs: LOAD_TIMEOUT_MS }));
   } catch (err) {
-    memory.remove(TOKEN_KEY);
-    token = null;
-    showLogin(err.status === 401 ? err.message : `서버에 연결하지 못했습니다. ${err.message}`);
+    // 비밀번호가 틀렸을 때만 지운다. 연결이 안 될 때는 비밀번호를 남기고 다시 시도하게 한다.
+    if (err.status === 401) {
+      memory.remove(TOKEN_KEY);
+      token = null;
+      showLogin(err.message);
+    } else {
+      app.replaceChildren(retryView(err.message, start));
+    }
     return;
   }
   nav = h('nav', { class: 'tabs' });

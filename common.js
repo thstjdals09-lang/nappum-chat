@@ -28,17 +28,56 @@ export function clock(iso) {
   });
 }
 
-export async function request(path, { method = 'GET', body, headers = {} } = {}) {
-  const res = await fetch(API + path, {
-    method,
-    headers: { 'content-type': 'application/json', ...headers },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+// 첫 화면을 불러올 때만 쓴다. AI 답변은 더 오래 걸릴 수 있어 제한을 두지 않는다.
+export const LOAD_TIMEOUT_MS = 30_000;
+
+export async function request(path, { method = 'GET', body, headers = {}, timeoutMs } = {}) {
+  const abort = new AbortController();
+  const timer = timeoutMs ? setTimeout(() => abort.abort(), timeoutMs) : null;
+  let res;
+  try {
+    res = await fetch(API + path, {
+      method,
+      headers: { 'content-type': 'application/json', ...headers },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: abort.signal,
+    });
+  } catch {
+    throw new Error('서버에 연결하지 못했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요.');
+  } finally {
+    clearTimeout(timer);
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw Object.assign(new Error(data.error || '요청을 처리하지 못했습니다.'), { status: res.status });
   }
   return data;
+}
+
+// 쓰지 않으면 꺼지는 서버가 깨어나는 동안(실측 약 4초) 빈 화면 대신 보여 준다.
+export function loadingView(title) {
+  const slow = h('p', { class: 'sub', role: 'status' });
+  setTimeout(() => {
+    slow.textContent = '처음 접속할 때는 시간이 조금 더 걸립니다. 이 화면을 닫지 말고 기다려 주세요.';
+  }, 4000);
+  return h(
+    'main',
+    { class: 'entry' },
+    h('section', { class: 'entry-card wait' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), h('p', { role: 'status' }, title), slow),
+  );
+}
+
+export function retryView(message, onRetry) {
+  return h(
+    'main',
+    { class: 'entry' },
+    h(
+      'section',
+      { class: 'entry-card wait' },
+      h('p', { class: 'form-error', role: 'alert' }, message),
+      h('button', { class: 'primary wide', type: 'button', onclick: onRetry }, '다시 시도'),
+    ),
+  );
 }
 
 export const memory = {

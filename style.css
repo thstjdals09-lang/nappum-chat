@@ -414,3 +414,40 @@ summary { font-weight: 600; cursor: pointer; }
   .grid { grid-template-columns: minmax(0, 1fr); }
   .span2, .span3 { grid-column: auto; }
 }
+
+a { color: var(--brand); }
+
+/* 기다림 */
+.wait { display: grid; gap: 12px; justify-items: center; text-align: center; }
+.spinner { width: 28px; height: 28px; border: 3px solid var(--line); border-top-color: var(--brand); border-radius: 50%; animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+
+/* 손가락으로 누르는 화면: 누르는 영역 44px, 입력칸 16px(작으면 아이폰이 확대한다) */
+@media (max-width: 560px), (pointer: coarse) {
+  input, textarea, select, label > input, label > textarea, label > select { font-size: 16px; }
+  .primary, .ghost, .ghost-link, .top-actions .ghost, .tabs button, .link, .chip, .quick button, select { min-height: 44px; }
+  .ghost-link, .check a { display: inline-flex; align-items: center; }
+  .check a { min-height: 44px; }
+  .link { min-width: 44px; padding: 10px 0; }
+  summary { padding: 11px 0; }
+  .quick button { padding: 8px 14px; font-size: 14px; }
+  .slip .wide { min-height: 44px; }
+  input[type='checkbox'], .check input { width: 22px; height: 22px; margin-top: 0; }
+  .composer textarea { min-height: 44px; }
+  .composer .primary { height: 44px; }
+  .setup { gap: 0; }
+  .setup .link { display: flex; align-items: center; }
+}
+
+@media (max-width: 560px) {
+  .sub, .slip-sub, .slip-row, .who { font-size: 14px; }
+  .fine { font-size: 13px; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+  /* 빠른 질문이 여러 줄로 쌓이면 대화 영역이 좁아지니 한 줄로 밀어 넘긴다. */
+  .quick { flex-wrap: nowrap; overflow-x: auto; }
+  .quick button { flex: none; }
+  .top-actions .ghost { padding: 6px 12px; }
+  /* 관리 탭이 화면 밖으로 밀리지 않게 두 줄로 나눈다. */
+  .tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: visible; }
+  .tabs button { padding: 11px 4px; }
+}

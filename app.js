@@ -1,4 +1,4 @@
-import { bubble, h, memory, offerCard, quoteCard, quoteTag, request, won } from './common.js';
+import { LOAD_TIMEOUT_MS, bubble, h, loadingView, memory, offerCard, quoteCard, quoteTag, request, retryView, won } from './common.js';
 
 const SESSION_KEY = 'nappum.session';
 const POLL_MS = 5000;
@@ -193,11 +193,13 @@ async function send(text) {
 }
 
 async function poll() {
-  if (sending || document.hidden || !session) return;
+  if (sending || document.hidden || !session || !ui.log?.isConnected) return;
   try {
     const before = lastSeq;
+    // 지난 대화를 읽는 중이면 새 메시지가 와도 아래로 끌어내리지 않는다.
+    const following = ui.log.scrollHeight - ui.log.scrollTop - ui.log.clientHeight < 120;
     absorb(await request(`/chats/${session.id}?after=${lastSeq}`, { headers: auth() }));
-    if (lastSeq !== before) scrollDown();
+    if (following && lastSeq !== before) scrollDown();
   } catch {
     // 다음 주기에 다시 받는다.
   }
@@ -327,27 +329,27 @@ function showChat() {
 }
 
 async function boot() {
+  app.replaceChildren(loadingView('상담 화면을 불러오는 중입니다…'));
   try {
-    info = await request('/public');
+    info = await request('/public', { timeoutMs: LOAD_TIMEOUT_MS });
+    document.title = `${info.company.name} 납품 상담`;
+    if (!session) {
+      showEntry();
+      return;
+    }
+    await request(`/chats/${session.id}?after=999999999`, { headers: auth(), timeoutMs: LOAD_TIMEOUT_MS });
+    showChat();
   } catch (err) {
-    app.replaceChildren(h('p', { class: 'note error' }, err.message));
-    return;
-  }
-  document.title = `${info.company.name} 납품 상담`;
-
-  if (session) {
-    try {
-      await request(`/chats/${session.id}?after=999999999`, { headers: auth() });
-      showChat();
-    } catch {
+    // 이전 상담이 사라졌을 때만 지운다. 연결이 안 될 때는 상담 정보를 남기고 다시 시도하게 한다.
+    if (info && session && err.status === 404) {
       memory.remove(SESSION_KEY);
       session = null;
       showEntry('이전 상담을 찾지 못했습니다. 다시 입력해 주세요.');
+    } else {
+      app.replaceChildren(retryView(err.message, boot));
     }
-  } else {
-    showEntry();
   }
-  setInterval(poll, POLL_MS);
 }
 
+setInterval(poll, POLL_MS);
 boot();
