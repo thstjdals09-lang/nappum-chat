@@ -29,6 +29,8 @@ let tab = 'today';
 let openChatId = null;
 let chatStage = 'all';
 let chatSearch = '';
+let productSearch = '';
+const openRows = new Set();
 let settings = null;
 let paces = {};
 let main;
@@ -110,21 +112,36 @@ async function decideQuote(id, status, note = '') {
   }
 }
 
+// 건수가 많아도 한눈에 보이게 한 줄로 접어 둔다. 화면을 다시 그려도 펼친 줄은 유지한다.
+function foldRow(id, summary, ...body) {
+  return h(
+    'details',
+    {
+      class: 'item fold',
+      open: openRows.has(id),
+      ontoggle(event) {
+        if (event.target.open) openRows.add(id);
+        else openRows.delete(id);
+      },
+    },
+    h('summary', null, summary),
+    body,
+  );
+}
+
 function quoteRow(quote) {
   const memo = h('input', { placeholder: '구매자에게 전할 말(선택)', maxLength: 300 });
   const decide = (status) => decideQuote(quote.id, status, memo.value);
-  return h(
-    'article',
-    { class: 'item' },
-    h(
-      'div',
-      { class: 'item-head' },
-      h('strong', null, quote.buyer.company),
-      h('span', { class: 'sub' }, `${quote.no} · ${clock(quote.createdAt)}`),
-    ),
-    h('p', { class: 'sub' }, `${quote.buyer.name} · ${quote.buyer.phone}`),
-    quote.belowTarget.length > 0 &&
-      h('p', null, h('span', { class: 'tag warn' }, `적정가 미만: ${quote.belowTarget.join(', ')}`)),
+  const more = quote.items.length > 1 ? ` 외 ${quote.items.length - 1}건` : '';
+  return foldRow(
+    quote.id,
+    [
+      h('span', { class: 'item-head' }, h('strong', { class: 'clip' }, quote.buyer.company), h('b', null, won(quote.total))),
+      h('span', { class: 'sub clip' }, `${quote.items[0].name}${more} · ${clock(quote.createdAt)}`),
+      quote.belowTarget.length > 0 && h('span', { class: 'tag warn' }, '적정가 미만'),
+    ],
+    h('p', { class: 'sub' }, `${quote.no} · ${quote.buyer.name} · ${quote.buyer.phone}`),
+    quote.belowTarget.length > 0 && h('p', { class: 'sub' }, `적정가 미만 품목: ${quote.belowTarget.join(', ')}`),
     h(
       'table',
       { class: 'mini' },
@@ -174,15 +191,12 @@ function ticketRow(ticket) {
       alert(err.message);
     }
   };
-  return h(
-    'article',
-    { class: 'item' },
-    h(
-      'div',
-      { class: 'item-head' },
-      h('strong', null, ticket.company),
-      h('span', { class: 'tag warn' }, ticket.label),
-    ),
+  return foldRow(
+    ticket.id,
+    [
+      h('span', { class: 'item-head' }, h('strong', { class: 'clip' }, ticket.company), h('span', { class: 'tag warn' }, ticket.label)),
+      h('span', { class: 'sub clip' }, ticket.question || ticket.summary),
+    ],
     ticket.question && h('p', { class: 'quote' }, ticket.question),
     h('p', { class: 'sub' }, ticket.summary),
     answer,
@@ -695,15 +709,48 @@ function productForm(product) {
   );
 }
 
-const IMPORT_COLUMNS = '품목명, 규격, 단위, 정가, 적정가, 절대 하한가, 최소 주문, 재고';
+// 품목이 많으면 폼이 너무 길어져서 한 줄로 두고, 펼칠 때 폼을 만든다.
+function productRow(product) {
+  const title = h('strong', { class: 'clip' });
+  const line = h('span', { class: 'sub clip' });
+  const paint = () => {
+    title.textContent = product.name || '새 품목';
+    const aim = product.target > 0 ? ` · 적정가 ${won(product.target)}` : '';
+    line.textContent = `정가 ${won(product.list || 0)}${aim} · 하한 ${won(product.floor || 0)} · 최소 ${product.moq}${product.unit}`;
+  };
+  paint();
+  let filled = false;
+  const row = h(
+    'details',
+    {
+      class: 'item fold product-row',
+      open: !product.id,
+      oninput: paint,
+      ontoggle() {
+        if (!row.open || filled) return;
+        filled = true;
+        row.append(productForm(product));
+      },
+    },
+    h(
+      'summary',
+      null,
+      h('span', { class: 'item-head' }, title, product.active === false && h('span', { class: 'tag' }, '판매 중지')),
+      line,
+    ),
+  );
+  return row;
+}
+
+const IMPORT_COLUMNS = '품목명, 규격, 단위, 정가, 적정가, 절대 하한가, 최소 주문, 재고, 재고 납기(일), 생산 납기(일)';
 const toNumber = (text) => Number(String(text ?? '').replace(/[^\d.]/g, ''));
 
-function productFromRow([name, spec, unit, list, target, floor, moq, stock], id) {
+function productFromRow([name, spec, unit, list, target, floor, moq, stock, leadDays, makeDays], id) {
   return {
     id, name, spec: spec || '', unit: unit || '개',
     list: toNumber(list), target: toNumber(target), floor: toNumber(floor),
     moq: toNumber(moq) || 1, stock: toNumber(stock),
-    leadDays: 3, makeDays: 14, tiers: [], note: '', active: true,
+    leadDays: toNumber(leadDays) || 3, makeDays: toNumber(makeDays) || 14, tiers: [], note: '', active: true,
   };
 }
 
@@ -741,8 +788,16 @@ function importBox(status) {
 function drawProducts(note = '') {
   const status = h('p', { class: 'path', role: 'status' }, note);
   const hasSample = settings.products.some(isSample);
+  const rows = settings.products.map((product) => ({ product, row: productRow(product) }));
+  const filterRows = () => {
+    const word = productSearch.trim().toLowerCase();
+    for (const { product, row } of rows) {
+      row.hidden = !`${product.name} ${product.id} ${product.spec}`.toLowerCase().includes(word);
+    }
+  };
+  filterRows();
   main.replaceChildren(
-    h('h1', null, '품목·가격'),
+    h('h1', null, `품목·가격 ${settings.products.length}개`),
     h('p', { class: 'sub' }, '적정가와 절대 하한가는 서버의 가격 계산에만 쓰입니다. AI도 구매자도 볼 수 없습니다. 수량 할인이나 조건을 붙여도 절대 하한가 밑으로는 내려가지 않습니다.'),
     importBox(status),
     ...(hasSample
@@ -763,7 +818,18 @@ function drawProducts(note = '') {
         ]
       : []),
     status,
-    ...settings.products.map(productForm),
+    h('input', {
+      class: 'search',
+      type: 'search',
+      value: productSearch,
+      placeholder: '품목명, 코드, 규격 검색',
+      'aria-label': '품목 검색',
+      oninput(event) {
+        productSearch = event.target.value;
+        filterRows();
+      },
+    }),
+    h('div', { class: 'list' }, rows.map(({ row }) => row)),
     h(
       'button',
       {
@@ -774,7 +840,9 @@ function drawProducts(note = '') {
             id: '', name: '', spec: '', unit: '개', list: 0, target: 0, floor: 0, moq: 1,
             stock: 0, leadDays: 3, makeDays: 14, tiers: [], note: '', active: true,
           });
+          productSearch = '';
           draw();
+          main.querySelector('.product-row[open]')?.scrollIntoView({ block: 'center' });
         },
       },
       '+ 품목 추가',

@@ -290,6 +290,20 @@ label small { display: block; margin-top: 4px; font-weight: 400; }
 .tile b { font-size: 24px; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .tile small { color: var(--sub); }
 
+[hidden] { display: none !important; }
+
+/* 한 줄로 접어 두는 목록 */
+.fold { display: block; position: relative; padding: 11px 15px; }
+.fold > summary { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; padding-right: 20px; font-weight: 400; list-style: none; }
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary::after { content: '⌄'; position: absolute; top: 12px; right: 14px; color: var(--sub); }
+.fold[open] > summary::after { transform: rotate(180deg); }
+.fold > summary .tag { justify-self: start; }
+.fold > :not(summary) { margin-top: 8px; }
+.fold:hover { border-color: var(--brand); }
+.product-row > .product { padding: 0; border: 0; }
+details.form-card:not([open]) { gap: 0; }
+
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip {
   display: inline-flex;

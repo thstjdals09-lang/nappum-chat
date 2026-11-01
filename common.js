@@ -144,9 +144,8 @@ export function offerCard(card, action) {
       card.unitPrice < card.listPrice && h('s', null, won(card.listPrice)),
     ),
     card.conditions.length > 0 && h('p', { class: 'slip-sub' }, `적용 조건: ${card.conditions.join(', ')}`),
-    row('공급가액', won(card.supply)),
-    row('부가세', won(card.vat)),
     row('합계', won(card.total), 'total'),
+    h('p', { class: 'slip-sub' }, `공급가액 ${won(card.supply)} + 부가세 ${won(card.vat)}`),
     action,
   );
 }

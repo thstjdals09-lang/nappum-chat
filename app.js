@@ -11,6 +11,7 @@ let sending = false;
 let view = { mode: 'ai', offers: [], quotes: [] };
 const ui = {};
 const actions = new Map();
+const offerCards = new Map();
 const quoteCards = new Map();
 
 const auth = () => ({ 'x-chat-token': session.token });
@@ -98,6 +99,15 @@ function retireAction(productId) {
   actions.delete(productId);
 }
 
+// 흥정이 이어지면 같은 품목의 지난 제시는 한 줄로 줄여 대화가 길어지지 않게 한다.
+function shrinkOldOffer(card) {
+  const old = offerCards.get(card.productId);
+  if (!old) return;
+  old.shown.replaceWith(
+    h('p', { class: 'note' }, `${old.card.name} ${old.card.qty.toLocaleString('ko-KR')}${old.card.unit} ${won(old.card.unitPrice)} 제시`),
+  );
+}
+
 function appendMessage(message) {
   if (message.role === 'buyer') ui.quick.replaceChildren();
   ui.log.append(bubble(message));
@@ -122,7 +132,10 @@ function appendMessage(message) {
       '이 조건으로 견적 요청',
     );
     actions.set(card.productId, action);
-    ui.log.append(offerCard(card, action));
+    shrinkOldOffer(card);
+    const shown = offerCard(card, action);
+    offerCards.set(card.productId, { card, shown });
+    ui.log.append(shown);
   }
 }
 
@@ -235,6 +248,7 @@ function productList() {
 
 function showChat() {
   actions.clear();
+  offerCards.clear();
   quoteCards.clear();
   ui.log =h('div', { class: 'log', 'aria-live': 'polite' });
   ui.input = h('textarea', {
