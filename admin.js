@@ -581,8 +581,8 @@ function productForm(product) {
       range.textContent = '정가와 절대 하한가를 넣어 주세요.';
       return;
     }
-    const aim = product.target > 0 ? `${won(product.target)} 근처에서 합의를 노리고, ` : '';
-    range.textContent = `${won(product.list)}에서 시작해 ${aim}${won(product.floor)} 밑으로는 절대 합의하지 않습니다.`;
+    const aim = product.target > 0 ? `말로는 ${won(product.target)}까지만 내려갑니다. 그 밑은 수량이나 조건을 받을 때만 내려가고, ` : '';
+    range.textContent = `${won(product.list)}에서 시작합니다. ${aim}${won(product.floor)} 밑으로는 절대 합의하지 않습니다.`;
   };
   paintRange();
   const showPreview = async () => {
@@ -591,7 +591,9 @@ function productForm(product) {
         method: 'POST',
         body: { productId: product.id, qty: product.moq },
       });
-      preview.textContent = `최소 수량 기준, 낮게 계속 부를 때: ${data.path.map((p) => won(p.price)).join(' → ')} (적정가 ${won(data.target)})`;
+      const steps = data.path.map((p) => won(p.price)).join(' → ');
+      const more = data.lowest < data.target ? ` 조건을 모두 받으면 ${won(data.lowest)}까지 내려갑니다.` : '';
+      preview.textContent = `최소 수량 기준, 구매자가 값을 크게 올려 올 때 말로 내려가는 폭: ${steps}.${more} 같은 값을 되풀이하면 내려가지 않습니다.`;
     } catch (err) {
       preview.textContent = `${err.message} 새 품목은 저장한 뒤에 볼 수 있습니다.`;
     }
@@ -649,7 +651,7 @@ function productForm(product) {
       'div',
       { class: 'grid' },
       field('정가(원)', product, 'list', { type: 'number', hint: '처음 보여 주는 단가' }),
-      field('적정가(원)', product, 'target', { type: 'number', cls: 'secret', hint: '이 가격 근처 합의가 목표. 밑으로 합의되면 표시됩니다' }),
+      field('적정가(원)', product, 'target', { type: 'number', cls: 'secret', hint: '말로 하는 흥정은 여기까지. 밑으로는 수량이나 조건을 받아야 내려갑니다' }),
       field('절대 하한가(원)', product, 'floor', { type: 'number', cls: 'secret', hint: '이 밑으로는 어떤 조건에도 합의하지 않습니다' }),
       choice('양보 속도', product, 'pace', [['', '기본 규칙 따름'], ...Object.entries(paces).map(([id, p]) => [id, p.label])]),
       choice('합의 전 되받기', product, 'minRounds', [['', '기본 규칙 따름'], [0, '바로 합의'], [1, '1번'], [2, '2번'], [3, '3번'], [4, '4번'], [5, '5번']]),
@@ -964,7 +966,7 @@ function drawRules() {
       },
     },
     Object.entries(paces).map(([id, p]) =>
-      h('option', { value: id, selected: id === settings.negotiation.pace }, `${p.label} (${p.steps.length}번에 절대 하한가 도달)`),
+      h('option', { value: id, selected: id === settings.negotiation.pace }, p.label),
     ),
   );
   main.replaceChildren(
@@ -973,12 +975,12 @@ function drawRules() {
     h(
       'div',
       { class: 'form-card' },
-      h('label', null, '양보 속도', pace, h('small', null, '구매자가 희망가를 부를 때마다 적정가를 거쳐 절대 하한가 쪽으로 다가가는 속도입니다.')),
+      h('label', null, '양보 속도', pace, h('small', null, '구매자가 희망가를 올려 올 때 한 번에 내려가는 폭입니다. 구매자가 올린 금액보다 많이 내리지 않고, 말로는 적정가까지만 내려갑니다. 같은 값을 되풀이하면 내려가지 않습니다.')),
       field('단가 단위(원)', settings.negotiation, 'roundUnit', { type: 'number', hint: '제시 단가를 이 단위로 올림합니다.' }),
       field('합의 전 되받기 횟수', settings.negotiation, 'minRounds', { type: 'number', hint: '희망가가 받아 줄 만해도 이 횟수만큼은 사이값으로 되받은 뒤에 합의합니다. 0이면 바로 합의합니다.' }),
     ),
     h('h2', null, '가격을 낮춰 주는 조건'),
-    h('p', { class: 'sub' }, '구매자가 받아들이면 시작가와 적정가가 함께 내려갑니다. 절대 하한가는 내려가지 않습니다. 단순히 깎아 주는 대신 무언가를 받고 내려 주는 장치입니다.'),
+    h('p', { class: 'sub' }, '구매자가 받아들이면 시작가와 적정가가 함께 내려갑니다. 적정가 밑으로 내려가는 길은 이 조건과 수량 할인뿐입니다. 절대 하한가는 내려가지 않습니다.'),
     h(
       'div',
       { class: 'form-card' },
